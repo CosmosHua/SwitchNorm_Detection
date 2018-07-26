@@ -176,6 +176,9 @@ __C.DATA_LOADER.NUM_THREADS = 4
 # ---------------------------------------------------------------------------- #
 __C.TEST = AttrDict()
 
+__C.TEST.USE_BATCH_AVG = False
+__C.TEST.ITER_COMPUTE_BATCH_AVEARGE = 0
+
 # Datasets to test on
 # Available dataset list: datasets.dataset_catalog.DATASETS.keys()
 # If multiple datasets are listed, testing is performed on each one sequentially
@@ -581,6 +584,7 @@ __C.SOLVER.MOMENTUM = 0.9
 __C.SOLVER.WEIGHT_DECAY = 0.0005
 # L2 regularization hyperparameter for GroupNorm's parameters
 __C.SOLVER.WEIGHT_DECAY_GN = 0.0
+__C.SOLVER.WEIGHT_DECAY_SN = 0.0
 
 # Whether to double the learning rate for bias
 __C.SOLVER.BIAS_DOUBLE_LR = True
@@ -640,6 +644,9 @@ __C.FAST_RCNN.ROI_XFORM_SAMPLING_RATIO = 0
 # Note: some models may have constraints on what they can use, e.g. they use
 # pretrained FC layers like in VGG16, and will ignore this option
 __C.FAST_RCNN.ROI_XFORM_RESOLUTION = 14
+
+__C.FAST_RCNN.SN = AttrDict()
+__C.FAST_RCNN.SN.USE_BN = True
 
 
 # ---------------------------------------------------------------------------- #
@@ -725,6 +732,10 @@ __C.FPN.RPN_COLLECT_SCALE = 1
 __C.FPN.EXTRA_CONV_LEVELS = False
 # Use GroupNorm in the FPN-specific layers (lateral, etc.)
 __C.FPN.USE_GN = False
+__C.FPN.USE_SN = False
+
+__C.FPN.SN = AttrDict()
+__C.FPN.SN.USE_BN = True
 
 
 # ---------------------------------------------------------------------------- #
@@ -776,6 +787,9 @@ __C.MRCNN.WEIGHT_LOSS_MASK = 1.0
 __C.MRCNN.THRESH_BINARIZE = 0.5
 
 __C.MRCNN.MEMORY_EFFICIENT_LOSS = True  # TODO
+
+__C.MRCNN.SN = AttrDict()
+__C.MRCNN.SN.USE_BN = True  # TODO
 
 
 # ---------------------------------------------------------------------------- #
@@ -902,6 +916,10 @@ __C.RESNETS.IMAGENET_PRETRAINED_WEIGHTS = ''
 
 # Use GroupNorm instead of BatchNorm
 __C.RESNETS.USE_GN = False
+__C.RESNETS.USE_SN = False
+
+__C.RESNETS.SN = AttrDict()
+__C.RESNETS.SN.USE_BN = True
 
 
 # ---------------------------------------------------------------------------- #
@@ -939,7 +957,10 @@ __C.BBOX_XFORM_CLIP = np.log(1000. / 16.)
 # We use the same pixel mean for all networks even though it's not exactly what
 # they were trained with
 # "Fun" fact: the history of where these values comes from is lost (From Detectron lol)
-__C.PIXEL_MEANS = np.array([[[102.9801, 115.9465, 122.7717]]])
+#__C.PIXEL_MEANS = np.array([[[102.9801, 115.9465, 122.7717]]])
+__C.PIXEL_ORDER = 0
+__C.PIXEL_MEANS = (102.9801, 115.9465, 122.7717)
+__C.PIXEL_VARS = (1.0, 1.0, 1.0)
 
 # For reproducibility
 __C.RNG_SEED = 3

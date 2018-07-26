@@ -30,6 +30,7 @@ from __future__ import unicode_literals
 from six.moves import cPickle as pickle
 import numpy as np
 import cv2
+import torch
 
 from core.config import cfg
 
@@ -46,7 +47,7 @@ def get_image_blob(im, target_scale, target_max_size):
         im_info (ndarray)
     """
     processed_im, im_scale = prep_im_for_blob(
-        im, cfg.PIXEL_MEANS, [target_scale], target_max_size
+        im, cfg.PIXEL_MEANS, cfg.PIXEL_VARS, [target_scale], target_max_size
     )
     blob = im_list_to_blob(processed_im)
     # NOTE: this height and width may be larger than actual scaled input image
@@ -101,7 +102,7 @@ def get_max_shape(im_shapes):
     return max_shape
 
 
-def prep_im_for_blob(im, pixel_means, target_sizes, max_size):
+def prep_im_for_blob(im, pixel_means, pixel_vars, target_sizes, max_size):
     """Prepare an image for use as a network input blob. Specially:
       - Subtract per-channel pixel mean
       - Convert to float32
@@ -110,7 +111,12 @@ def prep_im_for_blob(im, pixel_means, target_sizes, max_size):
     the scale factors that were used to compute each returned image.
     """
     im = im.astype(np.float32, copy=False)
-    im -= pixel_means
+    if cfg.PIXEL_ORDER == 1:
+        im = im[ :, :, [2, 1, 0]]#np.transpose(im,(2,1,0))
+        im /= 255.0
+    im -= np.array([[[pixel_means[0], pixel_means[1], pixel_means[2]]]])
+    im /= np.array([[[pixel_vars[0], pixel_vars[1], pixel_vars[2]]]])
+    ##im -= pixel_means
     im_shape = im.shape
     im_size_min = np.min(im_shape[0:2])
     im_size_max = np.max(im_shape[0:2])

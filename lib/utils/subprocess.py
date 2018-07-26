@@ -68,12 +68,12 @@ def process_in_parallel(
         start = subinds[i][0]
         end = subinds[i][-1] + 1
         subprocess_env['CUDA_VISIBLE_DEVICES'] = str(gpu_ind)
-        cmd = ('python {binary} --range {start} {end} --cfg {cfg_file} --set {opts} '
-               '--output_dir {output_dir}')
+        cmd = ('python {binary} --range {start} {end} --cfg \'{cfg_file}\' --set {opts} '
+               '--output_dir \'{output_dir}\'')
         if load_ckpt is not None:
-            cmd += ' --load_ckpt {load_ckpt}'
+            cmd += ' --load_ckpt \'{load_ckpt}\''
         elif load_detectron is not None:
-            cmd += ' --load_detectron {load_detectron}'
+            cmd += ' --load_detectron \'{load_detectron}\''
         cmd = cmd.format(
             binary=shlex_quote(binary),
             start=int(start),

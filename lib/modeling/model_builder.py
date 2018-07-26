@@ -367,3 +367,8 @@ class Generalized_RCNN(nn.Module):
     def _add_loss(self, return_dict, key, value):
         """Add loss tensor to returned dictionary"""
         return_dict['losses'][key] = value
+
+    #def eval(self):
+    #    self.trainingg = False
+    #    for m in self.modules():
+    #         m.training = False

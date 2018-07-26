@@ -29,11 +29,13 @@ import os
 import yaml
 
 import torch
+import torch.nn as nn
 
 from core.config import cfg
 # from core.rpn_generator import generate_rpn_on_dataset  #TODO: for rpn only case
 # from core.rpn_generator import generate_rpn_on_range
 from core.test import im_detect_all
+from core.test import im_conv_body_only
 from datasets import task_evaluation
 from datasets.json_dataset import JsonDataset
 from modeling import model_builder
@@ -64,11 +66,11 @@ def get_eval_functions():
     return parent_func, child_func
 
 
-def get_inference_dataset(index, is_parent=True):
+def get_inference_dataset(index, datasets, is_parent=True):
     assert is_parent or len(cfg.TEST.DATASETS) == 1, \
         'The child inference process can only work on a single dataset'
 
-    dataset_name = cfg.TEST.DATASETS[index]
+    dataset_name = datasets
 
     if cfg.TEST.PRECOMPUTED_PROPOSALS:
         assert is_parent or len(cfg.TEST.PROPOSAL_FILES) == 1, \
@@ -86,7 +88,14 @@ def get_inference_dataset(index, is_parent=True):
 def run_inference(
         args, ind_range=None,
         multi_gpu_testing=False, gpu_id=0,
-        check_expected_results=False):
+        check_expected_results=False,
+        tb_logger=None,
+        cur_iter=-1):
+    global tblogger
+    global curiter
+    tblogger = tb_logger
+    curiter = cur_iter
+
     parent_func, child_func = get_eval_functions()
     is_parent = ind_range is None
 
@@ -98,7 +107,7 @@ def run_inference(
             # launch subprocesses that each run inference on a range of the dataset
             all_results = {}
             for i in range(len(cfg.TEST.DATASETS)):
-                dataset_name, proposal_file = get_inference_dataset(i)
+                dataset_name, proposal_file = get_inference_dataset(i, cfg.TEST.DATASETS[i])
                 output_dir = args.output_dir
                 results = parent_func(
                     args,
@@ -114,7 +123,8 @@ def run_inference(
             # Subprocess child case:
             # In this case test_net was called via subprocess.Popen to execute on a
             # range of inputs on a single dataset
-            dataset_name, proposal_file = get_inference_dataset(0, is_parent=False)
+            dataset_name, proposal_file = \
+                    get_inference_dataset(0, cfg.TEST.DATASETS[0], is_parent=False)
             output_dir = args.output_dir
             return child_func(
                 args,
@@ -218,6 +228,7 @@ def test_net(
         dataset_name,
         proposal_file,
         output_dir,
+        model=None,
         ind_range=None,
         gpu_id=0):
     """Run inference on all images in a dataset or over an index range of images
@@ -226,10 +237,30 @@ def test_net(
     assert not cfg.MODEL.RPN_ONLY, \
         'Use rpn_generate to generate proposals from RPN-only models'
 
+    model = initialize_model_from_cfg(args, gpu_id=gpu_id)
+
+    if tblogger is not None and gpu_id == 0:
+        for name, param in model.named_parameters():
+            if 'mean_weight' in name:
+                softmax = nn.Softmax(0)
+                weight = softmax(param).cpu().detach().numpy()
+                tblogger.add_scalar('mean_weight/'+name+'/in', weight[0], curiter)
+                tblogger.add_scalar('mean_weight/'+name+'/ln', weight[1], curiter)
+                if len(weight) > 2:
+                    tblogger.add_scalar('mean_weight/'+name+'/bn', weight[2], curiter)
+            elif 'var_weight' in name:
+                softmax = nn.Softmax(0)
+                weight = softmax(param).cpu().detach().numpy()
+                tblogger.add_scalar('var_weight/'+name+'/in', weight[0], curiter)
+                tblogger.add_scalar('var_weight/'+name+'/ln', weight[1], curiter)
+                if len(weight) > 2:
+                    tblogger.add_scalar('var_weight/'+name+'/bn', weight[2], curiter)
+
+
     roidb, dataset, start_ind, end_ind, total_num_images = get_roidb_and_dataset(
         dataset_name, proposal_file, ind_range
     )
-    model = initialize_model_from_cfg(args, gpu_id=gpu_id)
+    model.eval()
     num_images = len(roidb)
     num_classes = cfg.MODEL.NUM_CLASSES
     all_boxes, all_segms, all_keyps = empty_results(num_classes, num_images)
@@ -320,7 +351,6 @@ def initialize_model_from_cfg(args, gpu_id=0):
     set to evaluation mode.
     """
     model = model_builder.Generalized_RCNN()
-    model.eval()
 
     if args.cuda:
         model.cuda()

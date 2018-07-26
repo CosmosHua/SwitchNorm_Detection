@@ -99,6 +99,12 @@ class fpn(nn.Module):
                 nn.GroupNorm(net_utils.get_group_gn(fpn_dim), fpn_dim,
                              eps=cfg.GROUP_NORM.EPSILON)
             )
+        elif cfg.FPN.USE_SN:
+            self.conv_top = nn.Sequential(
+                nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0, bias=False),
+                mynn.SwitchNorm(fpn_dim, using_moving_average=(not cfg.TEST.USE_BATCH_AVG),
+                                using_bn=cfg.FPN.SN.USE_BN)
+            )
         else:
             self.conv_top = nn.Conv2d(fpn_dim_lateral[0], fpn_dim, 1, 1, 0)
         self.topdown_lateral_modules = nn.ModuleList()
@@ -117,6 +123,12 @@ class fpn(nn.Module):
                     nn.Conv2d(fpn_dim, fpn_dim, 3, 1, 1, bias=False),
                     nn.GroupNorm(net_utils.get_group_gn(fpn_dim), fpn_dim,
                                  eps=cfg.GROUP_NORM.EPSILON)
+                ))
+            elif cfg.FPN.USE_SN:
+                self.posthoc_modules.append(nn.Sequential(
+                    nn.Conv2d(fpn_dim, fpn_dim, 3, 1, 1, bias=False),
+                    mynn.SwitchNorm(fpn_dim, using_moving_average=(not cfg.TEST.USE_BATCH_AVG),
+                                    using_bn=cfg.FPN.SN.USE_BN)
                 ))
             else:
                 self.posthoc_modules.append(
@@ -180,6 +192,15 @@ class fpn(nn.Module):
             mapping_to_detectron['conv_top.0.weight'] = d_prefix + '_w'
             mapping_to_detectron['conv_top.1.weight'] = d_prefix + '_gn_s'
             mapping_to_detectron['conv_top.1.bias'] = d_prefix + '_gn_b'
+        elif cfg.FPN.USE_SN:
+            mapping_to_detectron['conv_top.0.weight'] = d_prefix + '_w'
+            mapping_to_detectron['conv_top.1.weight'] = d_prefix + '_sn_s'
+            mapping_to_detectron['conv_top.1.bias'] = d_prefix + '_sn_b'
+            mapping_to_detectron['conv_top.1.mean_weight'] = d_prefix + '_sn_mean_weight'
+            mapping_to_detectron['conv_top.1.var_weight'] = d_prefix + '_sn_var_weight'
+            if cfg.FPN.SN.USE_BN:
+                mapping_to_detectron['conv_top.1.running_mean'] = d_prefix + '_sn_rm'
+                mapping_to_detectron['conv_top.1.running_var'] = d_prefix + '_sn_riv'
         else:
             mapping_to_detectron['conv_top.weight'] = d_prefix + '_w'
             mapping_to_detectron['conv_top.bias'] = d_prefix + '_b'
@@ -192,6 +213,19 @@ class fpn(nn.Module):
                     p_prefix + '.1.weight' : d_prefix + '_gn_s',
                     p_prefix + '.1.bias': d_prefix + '_gn_b'
                 })
+            elif cfg.FPN.USE_SN:
+                mapping_to_detectron.update({
+                    p_prefix + '.0.weight' : d_prefix + '_w',
+                    p_prefix + '.1.weight' : d_prefix + '_sn_s',
+                    p_prefix + '.1.bias': d_prefix + '_sn_b',
+                    p_prefix + '.1.mean_weight': d_prefix + '_sn_mean_weight',
+                    p_prefix + '.1.var_weight': d_prefix + '_sn_var_weight',
+                })
+                if cfg.FPN.SN.USE_BN:
+                    mapping_to_detectron.update({
+                        p_prefix + '.1.running_mean': d_prefix + '_sn_rm',
+                        p_prefix + '.1.running_var': d_prefix + '_sn_riv',
+                    })
             else:
                 mapping_to_detectron.update({
                     p_prefix + '.weight' : d_prefix + '_w',
@@ -207,6 +241,19 @@ class fpn(nn.Module):
                     p_prefix + '.1.weight': d_prefix + '_gn_s',
                     p_prefix + '.1.bias': d_prefix + '_gn_b'
                 })
+            elif cfg.FPN.USE_SN:
+                mapping_to_detectron.update({
+                    p_prefix + '.0.weight': d_prefix + '_w',
+                    p_prefix + '.1.weight': d_prefix + '_sn_s',
+                    p_prefix + '.1.bias': d_prefix + '_sn_b',
+                    p_prefix + '.1.mean_weight': d_prefix + '_sn_mean_weight',
+                    p_prefix + '.1.var_weight': d_prefix + '_sn_var_weight',
+                })
+                if cfg.FPN.SN.USE_BN:
+                    mapping_to_detectron.update({
+                        p_prefix + '.1.running_mean': d_prefix + '_sn_rm',
+                        p_prefix + '.1.running_var': d_prefix + '_sn_riv',
+                    })
             else:
                 mapping_to_detectron.update({
                     p_prefix + '.weight': d_prefix + '_w',
@@ -271,6 +318,12 @@ class topdown_lateral_module(nn.Module):
                 nn.GroupNorm(net_utils.get_group_gn(self.dim_out), self.dim_out,
                              eps=cfg.GROUP_NORM.EPSILON)
             )
+        elif cfg.FPN.USE_SN:
+            self.conv_lateral = nn.Sequential(
+                nn.Conv2d(dim_in_lateral, self.dim_out, 1, 1, 0, bias=False),
+                mynn.SwitchNorm(self.dim_out, using_moving_average=(not cfg.TEST.USE_BATCH_AVG),
+                                using_bn=cfg.FPN.SN.USE_BN)
+            )
         else:
             self.conv_lateral = nn.Conv2d(dim_in_lateral, self.dim_out, 1, 1, 0)
 
@@ -278,6 +331,8 @@ class topdown_lateral_module(nn.Module):
 
     def _init_weights(self):
         if cfg.FPN.USE_GN:
+            conv = self.conv_lateral[0]
+        elif cfg.FPN.USE_SN:
             conv = self.conv_lateral[0]
         else:
             conv = self.conv_lateral

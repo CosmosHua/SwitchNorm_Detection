@@ -22,6 +22,10 @@ def ResNet50_conv5_body():
     return ResNet_convX_body((3, 4, 6, 3))
 
 
+def ResNet50_conv5_fc_body():
+    return ResNet_convX_body((3, 4, 6, 3), cls=True)
+
+
 def ResNet101_conv4_body():
     return ResNet_convX_body((3, 4, 23))
 
@@ -30,8 +34,16 @@ def ResNet101_conv5_body():
     return ResNet_convX_body((3, 4, 23, 3))
 
 
+def ResNet101_conv5_fc_body():
+    return ResNet_convX_body((3, 4, 23, 3), cls=True)
+
+
 def ResNet152_conv5_body():
     return ResNet_convX_body((3, 8, 36, 3))
+
+
+def ResNet152_conv5_body():
+    return ResNet_convX_body((3, 8, 36, 3), cls=True)
 
 
 # ---------------------------------------------------------------------------- #
@@ -40,8 +52,9 @@ def ResNet152_conv5_body():
 
 
 class ResNet_convX_body(nn.Module):
-    def __init__(self, block_counts):
+    def __init__(self, block_counts, cls=False):
         super().__init__()
+        self.cls = cls
         self.block_counts = block_counts
         self.convX = len(block_counts) + 1
         self.num_layers = (sum(block_counts) + 3 * (self.convX == 4)) * 3 + 2
@@ -59,6 +72,9 @@ class ResNet_convX_body(nn.Module):
             stride_init = 2 if cfg.RESNETS.RES5_DILATION == 1 else 1
             self.res5, dim_in = add_stage(dim_in, 2048, dim_bottleneck * 8, block_counts[3],
                                           cfg.RESNETS.RES5_DILATION, stride_init)
+            if cls:
+                self.avgpool = nn.AvgPool2d(7)
+                self.classifier = nn.Linear(2048, 1000)
             self.spatial_scale = 1 / 32 * cfg.RESNETS.RES5_DILATION
         else:
             self.spatial_scale = 1 / 16  # final feature scale wrt. original image scale
@@ -72,6 +88,8 @@ class ResNet_convX_body(nn.Module):
         assert cfg.RESNETS.FREEZE_AT <= self.convX
         for i in range(1, cfg.RESNETS.FREEZE_AT + 1):
             freeze_params(getattr(self, 'res%d' % i))
+            for m in getattr(self, 'res%d' % i).children():
+                m.training = False
 
         # Freeze all bn (affine) layers !!!
         self.apply(lambda m: freeze_params(m) if isinstance(m, mynn.AffineChannel2d) else None)
@@ -83,6 +101,20 @@ class ResNet_convX_body(nn.Module):
                 'res1.gn1.weight': 'conv1_gn_s',
                 'res1.gn1.bias': 'conv1_gn_b',
             }
+            orphan_in_detectron = ['pred_w', 'pred_b']
+        elif cfg.RESNETS.USE_SN:
+            mapping_to_detectron = {
+                'res1.conv1.weight': 'conv1_w',
+                'res1.sn1.weight': 'conv1_sn_s',
+                'res1.sn1.bias': 'conv1_sn_b',
+                'res1.sn1.mean_weight': 'conv1_sn_mean_weight',
+                'res1.sn1.var_weight': 'conv1_sn_var_weight',
+            }
+            if cfg.RESNETS.SN.USE_BN:
+                mapping_to_detectron.update({
+                    'res1.sn1.running_mean': 'conv1_sn_rm',
+                    'res1.sn1.running_var': 'conv1_sn_riv',
+                })
             orphan_in_detectron = ['pred_w', 'pred_b']
         else:
             mapping_to_detectron = {
@@ -112,6 +144,10 @@ class ResNet_convX_body(nn.Module):
     def forward(self, x):
         for i in range(self.convX):
             x = getattr(self, 'res%d' % (i + 1))(x)
+        if self.cls:
+            x = self.avgpool(x)
+            x = x.view(-1)
+            x = self.classifier(x)
         return x
 
 
@@ -216,6 +252,17 @@ def basic_gn_shortcut(inplanes, outplanes, stride):
                      eps=cfg.GROUP_NORM.EPSILON)
     )
 
+def basic_sn_shortcut(inplanes, outplanes, stride):
+    return nn.Sequential(
+        nn.Conv2d(inplanes,
+                  outplanes,
+                  kernel_size=1,
+                  stride=stride,
+                  bias=False),
+        mynn.SwitchNorm(outplanes, using_moving_average=(not cfg.TEST.USE_BATCH_AVG),
+                        using_bn=cfg.RESNETS.SN.USE_BN)
+    )
+
 
 # ------------------------------------------------------------------------------
 # various stems (may expand and may consider a new helper)
@@ -235,6 +282,15 @@ def basic_gn_stem():
         ('conv1', nn.Conv2d(3, 64, 7, stride=2, padding=3, bias=False)),
         ('gn1', nn.GroupNorm(net_utils.get_group_gn(64), 64,
                              eps=cfg.GROUP_NORM.EPSILON)),
+        ('relu', nn.ReLU(inplace=True)),
+        ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))]))
+
+
+def basic_sn_stem():
+    return nn.Sequential(OrderedDict([
+        ('conv1', nn.Conv2d(3, 64, 7, stride=2, padding=3, bias=False)),
+        ('sn1', mynn.SwitchNorm(64, using_moving_average=(not cfg.TEST.USE_BATCH_AVG),
+                                using_bn=cfg.RESNETS.SN.USE_BN)),
         ('relu', nn.ReLU(inplace=True)),
         ('maxpool', nn.MaxPool2d(kernel_size=3, stride=2, padding=1))]))
 
@@ -346,6 +402,59 @@ class bottleneck_gn_transformation(nn.Module):
         return out
 
 
+class bottleneck_sn_transformation(nn.Module):
+    expansion = 4
+
+    def __init__(self, inplanes, outplanes, innerplanes, stride=1, dilation=1, group=1,
+                 downsample=None):
+        super().__init__()
+        # In original resnet, stride=2 is on 1x1.
+        # In fb.torch resnet, stride=2 is on 3x3.
+        (str1x1, str3x3) = (stride, 1) if cfg.RESNETS.STRIDE_1X1 else (1, stride)
+        self.stride = stride
+
+        self.conv1 = nn.Conv2d(
+            inplanes, innerplanes, kernel_size=1, stride=str1x1, bias=False)
+        self.sn1 = mynn.SwitchNorm(innerplanes, using_moving_average=(not cfg.TEST.USE_BATCH_AVG),
+                                   using_bn=cfg.RESNETS.SN.USE_BN)
+
+        self.conv2 = nn.Conv2d(
+            innerplanes, innerplanes, kernel_size=3, stride=str3x3, bias=False,
+            padding=1 * dilation, dilation=dilation, groups=group)
+        self.sn2 = mynn.SwitchNorm(innerplanes, using_moving_average=(not cfg.TEST.USE_BATCH_AVG), 
+                                   using_bn=cfg.RESNETS.SN.USE_BN)
+
+        self.conv3 = nn.Conv2d(
+            innerplanes, outplanes, kernel_size=1, stride=1, bias=False)
+        self.sn3 = mynn.SwitchNorm(outplanes, using_moving_average=(not cfg.TEST.USE_BATCH_AVG), 
+                                   using_bn=cfg.RESNETS.SN.USE_BN)
+
+        self.downsample = downsample
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.sn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.sn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.sn3(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        out += residual
+        out = self.relu(out)
+
+        return out
+
+
 # ---------------------------------------------------------------------------- #
 # Helper functions
 # ---------------------------------------------------------------------------- #
@@ -356,6 +465,8 @@ def residual_stage_detectron_mapping(module_ref, module_name, num_blocks, res_id
     """
     if cfg.RESNETS.USE_GN:
         norm_suffix = '_gn'
+    elif cfg.RESNETS.USE_SN:
+        norm_suffix = '_sn'
     else:
         norm_suffix = '_bn'
     mapping_to_detectron = {}
@@ -374,6 +485,16 @@ def residual_stage_detectron_mapping(module_ref, module_name, num_blocks, res_id
                                  + '.downsample.1.weight'] = dtt_bp + norm_suffix + '_s'
             mapping_to_detectron[my_prefix
                                  + '.downsample.1.bias'] = dtt_bp + norm_suffix + '_b'
+            if cfg.RESNETS.USE_SN:
+                mapping_to_detectron[my_prefix
+                                     + '.downsample.1.mean_weight'] = dtt_bp + norm_suffix + '_mean_weight'
+                mapping_to_detectron[my_prefix
+                                     + '.downsample.1.var_weight'] = dtt_bp + norm_suffix + '_var_weight'
+                if cfg.RESNETS.SN.USE_BN:
+                    mapping_to_detectron[my_prefix
+                                         + '.downsample.1.running_mean'] = dtt_bp + norm_suffix + '_rm'
+                    mapping_to_detectron[my_prefix
+                                         + '.downsample.1.running_var'] = dtt_bp + norm_suffix + '_riv'
 
         # conv branch
         for i, c in zip([1, 2, 3], ['a', 'b', 'c']):
@@ -385,6 +506,16 @@ def residual_stage_detectron_mapping(module_ref, module_name, num_blocks, res_id
                                  + '.' + norm_suffix[1:] + '%d.weight' % i] = dtt_bp + norm_suffix + '_s'
             mapping_to_detectron[my_prefix
                                  + '.' + norm_suffix[1:] + '%d.bias' % i] = dtt_bp + norm_suffix + '_b'
+            if cfg.RESNETS.USE_SN:
+                mapping_to_detectron[my_prefix + '.' + norm_suffix[1:] + '%d.mean_weight' % i] = \
+                                     dtt_bp + norm_suffix + '_mean_weight'
+                mapping_to_detectron[my_prefix + '.' + norm_suffix[1:] + '%d.var_weight' % i] = \
+                                     dtt_bp + norm_suffix + '_var_weight'
+                if cfg.RESNETS.SN.USE_BN:
+                    mapping_to_detectron[my_prefix + '.' + norm_suffix[1:] + '%d.running_mean' % i] = \
+                                         dtt_bp + norm_suffix + '_rm'
+                    mapping_to_detectron[my_prefix + '.' + norm_suffix[1:] + '%d.running_var' % i] = \
+                                         dtt_bp + norm_suffix + '_riv'
 
     return mapping_to_detectron, orphan_in_detectron
 
@@ -394,3 +525,4 @@ def freeze_params(m):
     """
     for p in m.parameters():
         p.requires_grad = False
+
