@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import pickle
+import glob
 import resource
 import traceback
 import logging
@@ -37,6 +38,13 @@ logging.getLogger('roi_data.loader').setLevel(logging.INFO)
 # RuntimeError: received 0 items of ancdata. Issue: pytorch/pytorch#973
 rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (4096, rlimit[1]))
+
+def get_last_file(path):
+  files = glob.glob(path)
+  if len(files) == 0:
+    return ''
+  files.sort(key=lambda fn: os.path.getmtime(fn) if not os.path.isdir(fn) else 0)
+  return files[-1]
 
 def parse_args():
     """Parse input arguments"""
@@ -260,12 +268,20 @@ def main():
 
     ### Optimizer ###
     gn_param_nameset = set()
+    sn_param_nameset = set()
     for name, module in maskRCNN.named_modules():
         if isinstance(module, nn.GroupNorm):
             gn_param_nameset.add(name+'.weight')
             gn_param_nameset.add(name+'.bias')
+        if isinstance(module, mynn.SwitchNorm):
+            sn_param_nameset.add(name+'.weight')
+            sn_param_nameset.add(name+'.bias')
+            sn_param_nameset.add(name+'.mean_weight')
+            sn_param_nameset.add(name+'.var_weight')
     gn_params = []
     gn_param_names = []
+    sn_params = []
+    sn_param_names = []
     bias_params = []
     bias_param_names = []
     nonbias_params = []
@@ -279,12 +295,16 @@ def main():
             elif key in gn_param_nameset:
                 gn_params.append(value)
                 gn_param_names.append(key)
+            elif key in sn_param_nameset:
+                sn_params.append(value)
+                sn_param_names.append(key)
             else:
                 nonbias_params.append(value)
                 nonbias_param_names.append(key)
         else:
             nograd_param_names.append(key)
     assert (gn_param_nameset - set(nograd_param_names) - set(bias_param_names)) == set(gn_param_names)
+    assert (sn_param_nameset - set(nograd_param_names) - set(bias_param_names)) == set(sn_param_names)
 
     # Learning rate of 0 is a dummy value to be set properly at the start of training
     params = [
@@ -296,32 +316,53 @@ def main():
          'weight_decay': cfg.SOLVER.WEIGHT_DECAY if cfg.SOLVER.BIAS_WEIGHT_DECAY else 0},
         {'params': gn_params,
          'lr': 0,
-         'weight_decay': cfg.SOLVER.WEIGHT_DECAY_GN}
+         'weight_decay': cfg.SOLVER.WEIGHT_DECAY_GN},
+        {'params': sn_params,
+         'lr': 0,
+         'weight_decay': cfg.SOLVER.WEIGHT_DECAY_SN}
     ]
     # names of paramerters for each paramter
-    param_names = [nonbias_param_names, bias_param_names, gn_param_names]
+    param_names = [nonbias_param_names, bias_param_names, gn_param_names, sn_param_names]
 
     if cfg.SOLVER.TYPE == "SGD":
         optimizer = torch.optim.SGD(params, momentum=cfg.SOLVER.MOMENTUM)
     elif cfg.SOLVER.TYPE == "Adam":
         optimizer = torch.optim.Adam(params)
 
-    ### Load checkpoint
-    if args.load_ckpt:
+
+    ### Load checkpoint & Resume
+    load_name = None
+    #args.run_name = misc_utils.get_run_name() + '_step'
+    args.run_name = ''
+    output_dir = misc_utils.get_output_dir(args, args.run_name)
+    last_file = get_last_file(output_dir+'ckpt/*.pth')
+    if os.path.isfile(last_file) and args.resume:
+        load_name = last_file
+    elif args.load_ckpt:
         load_name = args.load_ckpt
+
+    if load_name is not None:
         logging.info("loading checkpoint %s", load_name)
         checkpoint = torch.load(load_name, map_location=lambda storage, loc: storage)
+        ckpt_keys = set(checkpoint['model'].keys())
+        model_keys = set(maskRCNN.state_dict().keys())
+        missing_keys = model_keys - ckpt_keys
+        for mk in missing_keys:
+            logger.info('Key missing in ckpt: {}'.format(mk))
+
         net_utils.load_ckpt(maskRCNN, checkpoint['model'])
-        if args.resume:
+
+        if os.path.isfile(last_file) and args.resume:
+            logging.info("resume from %s", load_name)
             args.start_step = checkpoint['step'] + 1
             if 'train_size' in checkpoint:  # For backward compatibility
                 if checkpoint['train_size'] != train_size:
                     print('train_size value: %d different from the one in checkpoint: %d'
                           % (train_size, checkpoint['train_size']))
-
+    
             # reorder the params in optimizer checkpoint's params_groups if needed
             # misc_utils.ensure_optimizer_ckpt_params_order(param_names, checkpoint)
-
+    
             # There is a bug in optimizer.load_state_dict on Pytorch 0.3.1.
             # However it's fixed on master.
             # optimizer.load_state_dict(checkpoint['optimizer'])
@@ -329,6 +370,7 @@ def main():
         del checkpoint
         torch.cuda.empty_cache()
 
+    ### Load detectron
     if args.load_detectron:  #TODO resume for detectron weights (load sgd momentum values)
         logging.info("loading Detectron weights %s", args.load_detectron)
         load_detectron_weight(maskRCNN, args.load_detectron)
@@ -339,8 +381,6 @@ def main():
                                  minibatch=True)
 
     ### Training Setups ###
-    args.run_name = misc_utils.get_run_name() + '_step'
-    output_dir = misc_utils.get_output_dir(args, args.run_name)
     args.cfg_filename = os.path.basename(args.cfg_file)
 
     if not args.no_save:
@@ -354,7 +394,7 @@ def main():
         if args.use_tfboard:
             from tensorboardX import SummaryWriter
             # Set the Tensorboard logger
-            tblogger = SummaryWriter(output_dir)
+            tblogger = SummaryWriter(output_dir+'/train')
 
     ### Training Loop ###
     maskRCNN.train()
