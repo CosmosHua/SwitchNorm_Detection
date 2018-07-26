@@ -126,10 +126,10 @@ Optional arguments (see full input arguments via `python tools/test_net.py -h`):
 
 |     backbone|norm           |   type  | lr schd |  im/gpu |  box AP | mask AP | download            |
 | ---           |  :---:      |  :---:  |  :---:  |  :---:  |  :---:  |  :---:  | :---                |
-|R-50-C4   | SN-(8,32) | faster   |   2x    |    2    |  38.07  |    --     | [model](https://drive.google.com/file/d/1Eu9XCNWZBpy31wZcyYS49Wtr6y83BwVz/view?usp=sharing) &#124 [boxes](https://drive.google.com/file/d/1LrOSy09aiOM6A2CwFV7tpiyHLh3jhtpG/view?usp=sharing) |
-|R-50-FPN  | SN-(8,2) |  faster   |   2x    |    2    |  39.10  |    --     | [model](https://drive.google.com/file/d/1ZfqIhrugfQI0gb7i10AGVp6_uTEnqOkY/view?usp=sharing) &#124 [boxes](https://drive.google.com/file/d/1zb-6zXBKywnk2I2MoWe88NS8QKZCGtLo/view?usp=sharing) |
-|R-50-FPN | SN-(8, 1)| faster   |   2x    |    2    |  38.99  |    --     | [model](https://drive.google.com/file/d/1N6WiPK52JJmx5Cwv1wgXu0a9NZGtnPFx/view?usp=sharing) &#124 [boxes](https://drive.google.com/file/d/1p5ZpX0vThaOrNvczigd3yzdnC40EpF65/view?usp=sharing) |
-|R-50-FPN | SN-(8, 1)|  mask   |   2x    |    2    |  41.01  |  36.12  | [model](https://drive.google.com/file/d/12SCgBn3GZOfaNfKcbqWdWUr8A21xqFc7/view?usp=sharing) &#124 [boxes](https://drive.google.com/file/d/1sOk9At5Ev9UvEesmVsBH3Lh0KCRS4DJl/view?usp=sharing) &#124 [masks](https://drive.google.com/file/d/115BqRMdYc5ycj9pcOkrerE0eE7f7DlM8/view?usp=sharing) |
+|R-50-C4   | SN-(8,32) | faster   |   2x    |    2    |  38.07  |    --     | [model](https://drive.google.com/file/d/1Eu9XCNWZBpy31wZcyYS49Wtr6y83BwVz/view?usp=sharing) &#124; [boxes](https://drive.google.com/file/d/1LrOSy09aiOM6A2CwFV7tpiyHLh3jhtpG/view?usp=sharing) |
+|R-50-FPN  | SN-(8,2) |  faster   |   2x    |    2    |  39.10  |    --     | [model](https://drive.google.com/file/d/1ZfqIhrugfQI0gb7i10AGVp6_uTEnqOkY/view?usp=sharing) &#124; [boxes](https://drive.google.com/file/d/1zb-6zXBKywnk2I2MoWe88NS8QKZCGtLo/view?usp=sharing) |
+|R-50-FPN | SN-(8, 1)| faster   |   2x    |    2    |  38.99  |    --     | [model](https://drive.google.com/file/d/1N6WiPK52JJmx5Cwv1wgXu0a9NZGtnPFx/view?usp=sharing) &#124; [boxes](https://drive.google.com/file/d/1p5ZpX0vThaOrNvczigd3yzdnC40EpF65/view?usp=sharing) |
+|R-50-FPN | SN-(8, 1)|  mask   |   2x    |    2    |  41.01  |  36.12  | [model](https://drive.google.com/file/d/12SCgBn3GZOfaNfKcbqWdWUr8A21xqFc7/view?usp=sharing) &#124; [boxes](https://drive.google.com/file/d/1sOk9At5Ev9UvEesmVsBH3Lh0KCRS4DJl/view?usp=sharing) &#124; [masks](https://drive.google.com/file/d/115BqRMdYc5ycj9pcOkrerE0eE7f7DlM8/view?usp=sharing) |
 
 ### Comparisons with BN and GN
 
